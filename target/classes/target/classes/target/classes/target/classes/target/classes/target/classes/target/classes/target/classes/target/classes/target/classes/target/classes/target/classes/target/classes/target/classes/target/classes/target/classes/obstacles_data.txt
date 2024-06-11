@@ -1,1 +1,0 @@
-Obstacles{name='Asteroid', size=20, damage=5, speed=10}

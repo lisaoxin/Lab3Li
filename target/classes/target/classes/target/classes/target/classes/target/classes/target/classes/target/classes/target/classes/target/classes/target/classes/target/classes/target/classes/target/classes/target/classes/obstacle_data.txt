@@ -1,0 +1,1 @@
+Obstacles{name='BlackHole', size=30, damage=10, speed=20}

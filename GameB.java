@@ -1,66 +1,144 @@
-import com.rabbitmq.client.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.DeliverCallback;
 
 import java.io.BufferedReader;
-import java.io.FileReader;
 import java.io.IOException;
-import java.util.concurrent.TimeoutException;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
-//GameB class
 public class GameB {
-    private static final String RABBITMQ_QUEUE_NAME = "game_queue";
+    private static final String QUEUE_NAME = "game_queue";
+    private static final String WEB_SERVICE_URL = "http://localhost:8000/sendShip";
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    public static void main(String[] args) {
-        // Receive flat file data from RabbitMQ
-        String flatFileData = receiveFlatFile();
+    public static void main(String[] args) throws Exception {
+        // Receive the game object as a flat file data from RabbitMQ
+        receiveGameViaRabbitMQ();
 
-        // Convert flat file data back to obstacles objects
-        Obstacles obstacle1 = fromFlatFile(flatFileData); // Assuming the flat file contains data for obstacle 1
-        Obstacles obstacle2 = fromFlatFile(flatFileData); // Assuming the flat file contains data for obstacle 2
-        Obstacles obstacle3 = fromFlatFile(flatFileData); // Assuming the flat file contains data for obstacle 3
-
-        // Print obstacles
-        System.out.println("Obstacle 1: " + obstacle1);
-        System.out.println("Obstacle 2: " + obstacle2);
-        System.out.println("Obstacle 3: " + obstacle3);
-
-        // Existing code...
+        // Receive the game object as a serialized JSON message from a Web Service
+        receiveGameViaWebService();
     }
 
-    private static String receiveFlatFile() {
-        String flatFileData = null;
+    /**
+     * Description: Receives a game object as a flat file data from RabbitMQ
+     */
+    private static void receiveGameViaRabbitMQ() throws Exception {
+        ConnectionFactory factory = new ConnectionFactory();
+        factory.setHost("localhost");
+        Connection connection = factory.newConnection();
+        Channel channel = connection.createChannel();
+
+        channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+        System.out.println("[x] Waiting for messages. To exit press CTRL+C");
+
+        DeliverCallback deliverCallback = (consumerTag, delivery) -> {
+            String flatFileData = new String(delivery.getBody(), StandardCharsets.UTF_8);
+            System.out.println("[x] Received '" + flatFileData + "'"); // Print the flat file data
+            Ship ship = convertFlatFileToShip(flatFileData);
+            processShipData(ship); // Process the received ship data
+        };
+        channel.basicConsume(QUEUE_NAME, true, deliverCallback, consumerTag -> {
+        });
+    }
+
+    /**
+     * Description: Receives a game object as a serialized JSON message from a Web Service
+     */
+    private static void receiveGameViaWebService() {
         try {
-            // Connect to RabbitMQ
-            ConnectionFactory factory = new ConnectionFactory();
-            factory.setHost("localhost");
-            Connection connection = factory.newConnection();
-            Channel channel = connection.createChannel();
+            URL url = new URL(WEB_SERVICE_URL);
+            HttpURLConnection con = (HttpURLConnection) url.openConnection();
+            con.setRequestMethod("POST");
 
-            // Declare queue
-            channel.queueDeclare(RABBITMQ_QUEUE_NAME, false, false, false, null);
+            int responseCode = con.getResponseCode();
+            System.out.println("\nResponse Code: " + responseCode);
 
-            // Receive message
-            GetResponse response = channel.basicGet(RABBITMQ_QUEUE_NAME, true);
-            if (response != null) {
-                byte[] body = response.getBody();
-                flatFileData = new String(body, "UTF-8");
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
+                String jsonData = in.readLine();
+                in.close();
+
+                System.out.println("Response: " + jsonData); // Print the JSON string
+
+                Ship ship = convertJSONToShip(jsonData);
+                processShipData(ship); // Process the received ship data
+
+                System.out.println("\nGame object deserialized from JSON string:");
+                System.out.println("Ship type: " + ship.getName());
+                System.out.println("Speed: " + ship.getSpeed());
+                System.out.println("Damage: " + ship.getDamage());
+                System.out.println("Defense: " + ship.getDefense());
+            } else {
+                System.out.println("Failed to receive game via Web Service: HTTP error code " + responseCode);
             }
-
-            // Close connection
-            channel.close();
-            connection.close();
-        } catch (IOException | TimeoutException e) {
+        } catch (IOException e) {
             e.printStackTrace();
         }
-        return flatFileData;
     }
 
-    private static Obstacles fromFlatFile(String flatFileData) {
-        // Implement converting flat file data back to obstacles object
-        // This code depends on the specific format of the flat file
-        // For now, let's return a placeholder obstacles object
-        return new Obstacles("PlaceholderObstacle", 0, 0, 0);
+    /**
+     * Description: Processes the received ship data
+     * @param ship The Ship object received from Game A
+     */
+    private static void processShipData(Ship ship) {
+        System.out.println("\nProcessing ship data:");
+        System.out.println("Ship type: " + ship.getName());
+        System.out.println("Speed: " + ship.getSpeed());
+        System.out.println("Damage: " + ship.getDamage());
+        System.out.println("Defense: " + ship.getDefense());
+        // Add your game logic here to process the received ship data
+    }
+
+    /**
+     * Description: Converts a flat file data to a Ship object
+     * @param flatFileData The flat file data received from RabbitMQ
+     * @return The Ship object
+     */
+    private static Ship convertFlatFileToShip(String flatFileData) {
+        String[] parts = flatFileData.split(" ");
+        String name = parts[0];
+        int speed = Integer.parseInt(parts[1]);
+        int damage = Integer.parseInt(parts[2]);
+        int defense = Integer.parseInt(parts[3]);
+        return new Ship(name, speed, damage, defense);
+    }
+
+    /**
+     * Description: Converts a JSON string to a Ship object
+     * @param jsonData The JSON string received from the Web Service
+     * @return The Ship object
+     */
+    private static Ship convertJSONToShip(String jsonData) throws IOException {
+        return objectMapper.readValue(jsonData, Ship.class);
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

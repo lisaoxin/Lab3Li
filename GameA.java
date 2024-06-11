@@ -1,68 +1,84 @@
+import com.rabbitmq.client.ConnectionFactory;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.Channel;
-import com.rabbitmq.client.ConnectionFactory;
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 
-import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeoutException;
 
-//GameA class
 public class GameA {
-    private static final String RABBITMQ_QUEUE_NAME = "game_queue";
-    private static final String WEB_SERVICE_URL = "http://localhost:8080/hello";
+    private static final String QUEUE_NAME = "game_queue";
 
-    public static void main(String[] args) {
-        // Create obstacles objects
-        Obstacles obstacle1 = new Obstacles("Small Asteroid", 20, 5, 10);
-        Obstacles obstacle2 = new Obstacles("Large Asteroid", 40, 10, 5);
-        Obstacles obstacle3 = new Obstacles("BlackHole", 30, 10, 20);
+    public static void main(String[] args) throws Exception {
+        // Create ship object
+        Ship ship = new Ship("Fighter3000", 50, 10, 5);
 
-        // Print obstacles
-        System.out.println("Obstacle 1: " + obstacle1);
-        System.out.println("Obstacle 2: " + obstacle2);
-        System.out.println("Obstacle 3: " + obstacle3);
+        // Send the ship object as flat file data using RabbitMQ
+        sendShipViaRabbitMQ(ship);
 
-        // Send obstacles object as a flat file using RabbitMQ
-        sendFlatFile(obstacle1);
-        System.out.println("Response sent: Obstacle 1 sent via RabbitMQ.");
-        sendFlatFile(obstacle2);
-        System.out.println("Response sent: Obstacle 2 sent via RabbitMQ.");
-        sendFlatFile(obstacle3);
-        System.out.println("Response sent: Obstacle 3 sent via RabbitMQ.");
-
-        // Send obstacles object as JSON using Web Service
-        sendJSON(obstacle1);
-        System.out.println("Response sent: Obstacle 1 sent via Web Service.");
-        sendJSON(obstacle2);
-        System.out.println("Response sent: Obstacle 2 sent via Web Service.");
-        sendJSON(obstacle3);
-        System.out.println("Response sent: Obstacle 3 sent via Web Service.");
+        // Send the ship object as a serialized JSON message using a Web Service
+        sendShipViaWebService(ship);
     }
 
-    private static void sendFlatFile(Obstacles obstacle) {
-        // Convert obstacles object to flat file format
-        String flatFileData = obstacle.toString();
+    private static void sendShipViaRabbitMQ(Ship ship) throws Exception {
+        ConnectionFactory factory = new ConnectionFactory();
+        factory.setHost("localhost");
+        try (Connection connection = factory.newConnection();
+             Channel channel = connection.createChannel()) {
+            channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+            String flatFileData = ship.getName() + " " + ship.getSpeed() + " " + ship.getDamage() + " " + ship.getDefense();
+            channel.basicPublish("", QUEUE_NAME, null, flatFileData.getBytes(StandardCharsets.UTF_8));
+            System.out.println("[x] Sent '" + flatFileData + "'"); // Print the flat file data
+        }
+    }
 
-        // Write flat file to disk
-        try {
-            File file = new File("obstacle_data.txt");
-            FileWriter writer = new FileWriter(file);
-            writer.write(flatFileData);
-            writer.close();
-            System.out.println("Flat file saved: " + file.getAbsolutePath());
-        } catch (IOException e) {
-            e.printStackTrace();
+    private static void sendShipViaWebService(Ship ship) throws Exception {
+        String jsonData = "{\"name\":\"" + ship.getName() + "\",\"speed\":" + ship.getSpeed() + ",\"damage\":" + ship.getDamage() + ",\"defense\":" + ship.getDefense() + "}";
+        System.out.println("Game object serialized to json string: " + jsonData); // Print the JSON string
+
+        Thread serverThread = new Thread(() -> {
+            try {
+                HttpServer server = HttpServer.create(new InetSocketAddress(8000), 0);
+                server.createContext("/sendShip", new ShipHandler(jsonData));
+                server.setExecutor(null); // Use the default executor
+                server.start();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        });
+        serverThread.start();
+    }
+
+    static class ShipHandler implements HttpHandler {
+        private final String jsonData;
+
+        ShipHandler(String jsonData) {
+            this.jsonData = jsonData;
         }
 
-        // Implement sending flat file data via RabbitMQ
-        // This code depends on the RabbitMQ implementation
-    }
-
-    private static void sendJSON(Obstacles obstacle) {
-        // Implement sending obstacles object as JSON using Web Service
-        // This code depends on the specific web service implementation
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("POST".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(200, jsonData.getBytes().length);
+                OutputStream os = exchange.getResponseBody();
+                os.write(jsonData.getBytes());
+                os.close();
+            } else {
+                exchange.sendResponseHeaders(405, -1); // Method Not Allowed
+                exchange.getResponseBody().close();
+            }
+        }
     }
 }
+
+
+
+
 
 
 
